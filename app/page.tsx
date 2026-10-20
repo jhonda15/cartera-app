@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Wallet, Users, PlusCircle, Trash2, UserPlus } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Wallet, Users, PlusCircle, Trash2, UserPlus, LogOut } from 'lucide-react';
 import AbonoModal from '@/components/AbonoModal';
 import NuevaVentaModal from '@/components/NuevaVentaModal';
 import NuevoClienteModal from '@/components/NuevoClienteModal';
@@ -21,6 +22,9 @@ interface Sale {
 export default function DashboardPage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userRole, setUserRole] = useState<string>('operador');
+  const [userEmail, setUserEmail] = useState<string>('');
+  const router = useRouter();
 
   // Modales
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
@@ -29,11 +33,35 @@ export default function DashboardPage() {
   const [isClienteModalOpen, setIsClienteModalOpen] = useState(false);
 
   useEffect(() => {
-    fetchDashboardData();
+    checkAuthAndFetchData();
   }, []);
 
-  const fetchDashboardData = async () => {
+  const checkAuthAndFetchData = async () => {
     setLoading(true);
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session) {
+      router.push('/login');
+      return;
+    }
+
+    setUserEmail(session.user.email || '');
+
+    // Obtener rol del perfil de usuario
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', session.user.id)
+      .single();
+
+    if (profile && profile.role) {
+      setUserRole(profile.role);
+    }
+
+    await fetchDashboardData();
+  };
+
+  const fetchDashboardData = async () => {
     const { data, error } = await supabase
       .from('sales')
       .select('id, total_amount, balance_due, status, profiles(full_name, phone)')
@@ -46,19 +74,28 @@ export default function DashboardPage() {
     setLoading(false);
   };
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push('/login');
+  };
+
   const handleOpenAbono = (sale: Sale) => {
     setSelectedSale(sale);
     setIsAbonoModalOpen(true);
   };
 
   const handleDeleteSale = async (saleId: string, clientName: string) => {
+    if (userRole !== 'admin') {
+      alert('Solo los administradores pueden eliminar registros de ventas.');
+      return;
+    }
+
     const confirmDelete = window.confirm(
       `¿Estás seguro de que deseas eliminar la venta registrada para ${clientName}? Esta acción eliminará los registros de esa venta.`
     );
 
     if (!confirmDelete) return;
 
-    // Primero elimina pagos asociados si existen, luego la venta
     await supabase.from('payments').delete().eq('sale_id', saleId);
     const { error } = await supabase.from('sales').delete().eq('id', saleId);
 
@@ -71,10 +108,30 @@ export default function DashboardPage() {
 
   const totalPending = sales.reduce((acc, sale) => acc + Number(sale.balance_due), 0);
 
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-gray-500 font-medium text-sm">Cargando datos y verificando sesión...</p>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-gray-50 p-4 md:p-8">
       <div className="max-w-4xl mx-auto space-y-6">
         
+        {/* Barra superior con usuario y salir */}
+        <div className="flex justify-between items-center text-xs text-gray-500 px-2">
+          <span>Sesión activa: <strong className="text-gray-800">{userEmail}</strong> ({userRole.toUpperCase()})</span>
+          <button
+            onClick={handleLogout}
+            className="flex items-center space-x-1 text-red-600 hover:text-red-800 font-medium transition"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Cerrar Sesión</span>
+          </button>
+        </div>
+
         {/* Encabezado con Botones */}
         <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border">
           <div>
@@ -101,7 +158,7 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {/* Tarjetas General */}
+        {/* Tarjetas Generales */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white p-6 rounded-2xl shadow-md">
             <p className="text-blue-100 text-sm font-medium">Total Cartera Pendiente</p>
@@ -127,11 +184,11 @@ export default function DashboardPage() {
             <h2 className="font-bold text-lg text-gray-800">Clientes con Saldo Pendiente</h2>
           </div>
 
-          {loading ? (
-            <div className="p-8 text-center text-gray-400">Cargando cuentas...</div>
-          ) : (
-            <div className="divide-y">
-              {sales.map((sale) => (
+          <div className="divide-y">
+            {sales.length === 0 ? (
+              <div className="p-8 text-center text-gray-400">No hay ventas registradas con saldo pendiente.</div>
+            ) : (
+              sales.map((sale) => (
                 <div key={sale.id} className="p-4 sm:p-6 flex justify-between items-center hover:bg-gray-50 transition">
                   <div>
                     <p className="font-semibold text-gray-900">{sale.profiles?.full_name}</p>
@@ -157,18 +214,21 @@ export default function DashboardPage() {
                       <span className="hidden sm:inline">Abonar</span>
                     </button>
 
-                    <button
-                      onClick={() => handleDeleteSale(sale.id, sale.profiles?.full_name)}
-                      className="bg-red-50 text-red-600 hover:bg-red-600 hover:text-white p-2.5 rounded-xl transition shadow-sm"
-                      title="Eliminar Venta"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {/* Botón de eliminar visible SOLO para Administradores */}
+                    {userRole === 'admin' && (
+                      <button
+                        onClick={() => handleDeleteSale(sale.id, sale.profiles?.full_name)}
+                        className="bg-red-50 text-red-600 hover:bg-red-600 hover:text-white p-2.5 rounded-xl transition shadow-sm"
+                        title="Eliminar Venta"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+              ))
+            )}
+          </div>
         </div>
 
       </div>
