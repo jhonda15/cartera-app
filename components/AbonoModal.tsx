@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { DollarSign, CheckCircle2, X } from 'lucide-react';
+import { DollarSign, CheckCircle2, X, Calendar } from 'lucide-react';
 
 interface AbonoModalProps {
   saleId: string;
@@ -23,6 +23,9 @@ export default function AbonoModal({
 }: AbonoModalProps) {
   const [amount, setAmount] = useState<string>('');
   const [method, setMethod] = useState<string>('nequi');
+  const [paymentDate, setPaymentDate] = useState<string>(
+    new Date().toISOString().split('T')[0]
+  );
   const [notes, setNotes] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -48,25 +51,43 @@ export default function AbonoModal({
       return;
     }
 
-    // Insertar el pago (El Trigger de Supabase descuenta la deuda automáticamente)
-    const { error } = await supabase.from('payments').insert([
-      {
-        sale_id: saleId,
-        amount: numAmount,
-        payment_method: method,
-        notes: notes.trim() || null,
-      },
-    ]);
+    try {
+      // 1. Insertar el abono con la fecha seleccionada
+      const { error: paymentError } = await supabase.from('payments').insert([
+        {
+          sale_id: saleId,
+          amount: numAmount,
+          payment_method: method,
+          payment_date: paymentDate,
+          notes: notes.trim() || null,
+        },
+      ]);
 
-    if (error) {
-      setErrorMsg('Error al registrar el abono: ' + error.message);
-      setLoading(false);
-    } else {
+      if (paymentError) throw paymentError;
+
+      // 2. Calcular nuevo saldo y estado
+      const newBalance = currentBalance - numAmount;
+      const newStatus = newBalance <= 0 ? 'paid' : 'pending';
+
+      // 3. Actualizar la venta
+      const { error: updateError } = await supabase
+        .from('sales')
+        .update({
+          balance_due: newBalance <= 0 ? 0 : newBalance,
+          status: newStatus,
+        })
+        .eq('id', saleId);
+
+      if (updateError) throw updateError;
+
       setLoading(false);
       setAmount('');
       setNotes('');
       onSuccess();
       onClose();
+    } catch (err: any) {
+      setErrorMsg('Error al registrar el abono: ' + err.message);
+      setLoading(false);
     }
   };
 
@@ -78,7 +99,9 @@ export default function AbonoModal({
         <div className="p-5 border-b flex justify-between items-center bg-gray-50">
           <div>
             <h3 className="font-bold text-gray-900 text-lg">Registrar Abono</h3>
-            <p className="text-xs text-gray-500">Cliente: <span className="font-semibold text-gray-700">{clientName}</span></p>
+            <p className="text-xs text-gray-500">
+              Cliente: <span className="font-semibold text-gray-700">{clientName}</span>
+            </p>
           </div>
           <button
             onClick={onClose}
@@ -99,10 +122,29 @@ export default function AbonoModal({
             </span>
           </div>
 
+          {/* Campo de Fecha */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Fecha del Abono *
+            </label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                <Calendar className="w-4 h-4" />
+              </div>
+              <input
+                type="date"
+                value={paymentDate}
+                onChange={(e) => setPaymentDate(e.target.value)}
+                required
+                className="w-full pl-9 pr-4 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-gray-800 font-medium text-sm"
+              />
+            </div>
+          </div>
+
           {/* Input Monto */}
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">
-              Monto del Abono ($)
+              Monto del Abono ($) *
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
@@ -115,7 +157,7 @@ export default function AbonoModal({
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 required
-                className="w-full pl-9 pr-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-gray-900 font-medium text-lg"
+                className="w-full pl-9 pr-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-gray-900 font-medium text-lg"
               />
             </div>
           </div>
@@ -128,7 +170,7 @@ export default function AbonoModal({
             <select
               value={method}
               onChange={(e) => setMethod(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-gray-800 bg-white"
+              className="w-full px-3 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-gray-800 bg-white text-sm"
             >
               <option value="nequi">Nequi</option>
               <option value="daviplata">Daviplata</option>

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { UserPlus, X, CheckCircle2 } from 'lucide-react';
+import { UserPlus, X, CheckCircle2, MapPin } from 'lucide-react';
 
 interface NuevoClienteModalProps {
   isOpen: boolean;
@@ -17,6 +17,7 @@ export default function NuevoClienteModal({
 }: NuevoClienteModalProps) {
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -33,10 +34,12 @@ export default function NuevoClienteModal({
       return;
     }
 
-    const { error } = await supabase.from('profiles').insert([
+    // Insertar en la tabla 'clients'
+    const { error } = await supabase.from('clients').insert([
       {
         full_name: fullName.trim(),
         phone: phone.trim() || null,
+        address: address.trim() || null,
       },
     ]);
 
@@ -47,6 +50,7 @@ export default function NuevoClienteModal({
       setLoading(false);
       setFullName('');
       setPhone('');
+      setAddress('');
       onSuccess();
       onClose();
     }
@@ -56,6 +60,7 @@ export default function NuevoClienteModal({
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in duration-200">
         
+        {/* Encabezado */}
         <div className="p-5 border-b flex justify-between items-center bg-gray-50">
           <div className="flex items-center space-x-2">
             <div className="p-2 bg-green-100 text-green-600 rounded-lg">
@@ -63,17 +68,23 @@ export default function NuevoClienteModal({
             </div>
             <div>
               <h3 className="font-bold text-gray-900 text-lg">Nuevo Cliente</h3>
-              <p className="text-xs text-gray-500">Registrar en la base de datos</p>
+              <p className="text-xs text-gray-500">Registrar cliente deudor</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-gray-400 hover:bg-gray-200">
+          <button 
+            onClick={onClose} 
+            className="p-1 rounded-lg text-gray-400 hover:bg-gray-200 transition"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
+        {/* Formulario */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1">Nombre Completo *</label>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Nombre Completo *
+            </label>
             <input
               type="text"
               placeholder="Ej: María Gómez"
@@ -85,7 +96,9 @@ export default function NuevoClienteModal({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1">Teléfono / WhatsApp</label>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Teléfono / WhatsApp
+            </label>
             <input
               type="text"
               placeholder="Ej: 3001234567"
@@ -93,6 +106,21 @@ export default function NuevoClienteModal({
               onChange={(e) => setPhone(e.target.value)}
               className="w-full px-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-gray-900 font-medium text-sm"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Dirección (Opcional)
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Ej: Calle 15 # 4-20"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                className="w-full px-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-green-500 outline-none text-gray-900 font-medium text-sm"
+              />
+            </div>
           </div>
 
           {errorMsg && (
@@ -119,6 +147,7 @@ export default function NuevoClienteModal({
             </button>
           </div>
         </form>
+
       </div>
     </div>
   );
