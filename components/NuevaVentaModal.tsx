@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { ShoppingBag, PlusCircle, X, UserCheck } from 'lucide-react';
+import { ShoppingBag, PlusCircle, X } from 'lucide-react';
 
-interface Profile {
+interface Client {
   id: string;
   full_name: string;
   phone: string;
@@ -21,8 +21,9 @@ export default function NuevaVentaModal({
   onClose,
   onSuccess,
 }: NuevaVentaModalProps) {
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [selectedUserId, setSelectedUserId] = useState<string>('');
+  const [clients, setClients] = useState<Client[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string>('');
+  const [productType, setProductType] = useState<string>('');
   const [totalAmount, setTotalAmount] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -35,13 +36,15 @@ export default function NuevaVentaModal({
 
   const fetchClients = async () => {
     const { data, error } = await supabase
-      .from('profiles')
+      .from('clients')
       .select('id, full_name, phone')
       .order('full_name', { ascending: true });
 
     if (!error && data) {
-      setProfiles(data);
-      if (data.length > 0) setSelectedUserId(data[0].id);
+      setClients(data);
+      if (data.length > 0) setSelectedClientId(data[0].id);
+    } else if (error) {
+      console.error('Error al cargar clientes:', error.message);
     }
   };
 
@@ -60,17 +63,19 @@ export default function NuevaVentaModal({
       return;
     }
 
-    if (!selectedUserId) {
+    if (!selectedClientId) {
       setErrorMsg('Selecciona un cliente');
       setLoading(false);
       return;
     }
 
-    // Insertar la nueva venta (balance_due arranca igual al total)
+    // Insertar la nueva venta incluyendo sale_price y product_type
     const { error } = await supabase.from('sales').insert([
       {
-        client_id: selectedUserId,
+        client_id: selectedClientId,
+        product_type: productType.trim() || 'Venta General',
         total_amount: amount,
+        sale_price: amount, // 👈 Solución: pasa el valor a la columna sale_price para cumplir la condición NOT NULL
         balance_due: amount,
         status: 'pending',
       },
@@ -82,6 +87,7 @@ export default function NuevaVentaModal({
     } else {
       setLoading(false);
       setTotalAmount('');
+      setProductType('');
       onSuccess();
       onClose();
     }
@@ -120,17 +126,35 @@ export default function NuevaVentaModal({
             </label>
             <div className="relative">
               <select
-                value={selectedUserId}
-                onChange={(e) => setSelectedUserId(e.target.value)}
+                value={selectedClientId}
+                onChange={(e) => setSelectedClientId(e.target.value)}
                 className="w-full px-3 py-2.5 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-gray-800 bg-white font-medium text-sm"
               >
-                {profiles.map((client) => (
-                  <option key={client.id} value={client.id}>
-                    {client.full_name} ({client.phone || 'Sin tel'})
-                  </option>
-                ))}
+                {clients.length === 0 ? (
+                  <option value="">No hay clientes registrados</option>
+                ) : (
+                  clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.full_name} ({client.phone || 'Sin tel'})
+                    </option>
+                  ))
+                )}
               </select>
             </div>
+          </div>
+
+          {/* Producto / Concepto */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Producto / Concepto
+            </label>
+            <input
+              type="text"
+              placeholder="Ej: Perfume, Calzado, Ropa..."
+              value={productType}
+              onChange={(e) => setProductType(e.target.value)}
+              className="w-full px-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-gray-800 font-medium text-sm"
+            />
           </div>
 
           {/* Monto Total */}

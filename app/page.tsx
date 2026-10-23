@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { 
   PlusCircle, Trash2, UserPlus, LogOut, 
-  Edit2, Pencil, CheckCircle, History, Calendar, CreditCard
+  Edit2, Pencil, CheckCircle, History, Calendar, CreditCard, Search
 } from 'lucide-react';
 
 import AbonoModal from '@/components/AbonoModal';
@@ -50,6 +50,9 @@ export default function DashboardPage() {
   const [userEmail, setUserEmail] = useState<string>('');
   const router = useRouter();
 
+  // Buscador de Pendientes
+  const [searchTerm, setSearchTerm] = useState<string>('');
+
   // Navegación de Pestañas
   const [activeTab, setActiveTab] = useState<'summary' | 'paid' | 'products'>('summary');
   const [productsList, setProductsList] = useState<any[]>([]);
@@ -66,7 +69,7 @@ export default function DashboardPage() {
   const [isEditarVentaModalOpen, setIsEditarVentaModalOpen] = useState(false);
   const [saleToEdit, setSaleToEdit] = useState<any | null>(null);
 
-  // Modal de Historial de Abonos por Cliente
+  // Modal de Historial de Abonos
   const [isHistorialModalOpen, setIsHistorialModalOpen] = useState(false);
   const [saleForHistorial, setSaleForHistorial] = useState<any | null>(null);
 
@@ -112,7 +115,7 @@ export default function DashboardPage() {
       setPendingSales(salesData as unknown as Sale[]);
     }
 
-    // 2. Cargar TODOS los abonos registrados (para la pestaña Historial de Abonos)
+    // 2. Cargar Abonos Registrados
     const { data: paymentsData, error: paymentsErr } = await supabase
       .from('payments')
       .select('id, amount, payment_method, payment_date, notes, sale_id, sales(clients(full_name))')
@@ -120,8 +123,6 @@ export default function DashboardPage() {
 
     if (!paymentsErr && paymentsData) {
       setAllPayments(paymentsData as unknown as GlobalPayment[]);
-
-      // Suma global real de la caja
       const total = paymentsData.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
       setTotalCollected(total);
     }
@@ -196,6 +197,16 @@ export default function DashboardPage() {
     setIsProductoModalOpen(true);
   };
 
+  // Filtrado de pendientes en tiempo real por nombre, teléfono o producto
+  const filteredPendingSales = pendingSales.filter((sale) => {
+    const query = searchTerm.toLowerCase().trim();
+    const name = sale.clients?.full_name?.toLowerCase() || '';
+    const phone = sale.clients?.phone?.toLowerCase() || '';
+    const product = sale.product_type?.toLowerCase() || '';
+
+    return name.includes(query) || phone.includes(query) || product.includes(query);
+  });
+
   const totalPending = pendingSales.reduce((acc, sale) => acc + Number(sale.balance_due), 0);
 
   if (loading) {
@@ -265,7 +276,7 @@ export default function DashboardPage() {
             <p className="text-xs text-gray-500 font-medium mt-2">{pendingSales.length} Deudores Activos</p>
           </div>
 
-          {/* Tarjeta 2: Total Cobrado (Abonos Totales) */}
+          {/* Tarjeta 2: Total Cobrado */}
           <div 
             onClick={() => setActiveTab('paid')}
             className={`cursor-pointer p-6 rounded-2xl border transition shadow-sm ${
@@ -304,18 +315,32 @@ export default function DashboardPage() {
 
         </div>
 
-        {/* LISTA DE CUENTAS PENDIENTES */}
+        {/* LISTA DE CUENTAS PENDIENTES CON BUSCADOR */}
         {activeTab === 'summary' && (
           <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-            <div className="p-6 border-b flex justify-between items-center">
+            <div className="p-6 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <h2 className="font-bold text-lg text-gray-800">Clientes con Saldo Pendiente</h2>
+              
+              {/* Buscador */}
+              <div className="relative w-full sm:w-64">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar cliente, tel o producto..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-gray-50 border rounded-xl text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-red-400 transition"
+                />
+              </div>
             </div>
 
             <div className="divide-y">
-              {pendingSales.length === 0 ? (
-                <div className="p-8 text-center text-gray-400">¡Excelente! No hay ventas registradas con saldo pendiente.</div>
+              {filteredPendingSales.length === 0 ? (
+                <div className="p-8 text-center text-gray-400">
+                  {searchTerm ? 'No se encontraron clientes que coincidan con la búsqueda.' : '¡Excelente! No hay ventas registradas con saldo pendiente.'}
+                </div>
               ) : (
-                pendingSales.map((sale) => (
+                filteredPendingSales.map((sale) => (
                   <div key={sale.id} className="p-4 sm:p-6 flex justify-between items-center hover:bg-gray-50 transition">
                     <div>
                       <p className="font-semibold text-gray-900">{sale.clients?.full_name || 'Cliente no asignado'}</p>
