@@ -12,12 +12,14 @@ interface Client {
 
 interface NuevaVentaModalProps {
   isOpen: boolean;
+  empresaId?: string;
   onClose: () => void;
   onSuccess: () => void;
 }
 
 export default function NuevaVentaModal({
   isOpen,
+  empresaId,
   onClose,
   onSuccess,
 }: NuevaVentaModalProps) {
@@ -78,6 +80,7 @@ export default function NuevaVentaModal({
         sale_price: amount, // 👈 Solución: pasa el valor a la columna sale_price para cumplir la condición NOT NULL
         balance_due: amount,
         status: 'pending',
+        ...(empresaId ? { empresa_id: empresaId } : {}),
       },
     ]);
 

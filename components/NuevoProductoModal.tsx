@@ -7,6 +7,7 @@ import { ShoppingBag, X, CheckCircle2, Image as ImageIcon } from 'lucide-react';
 interface Props {
   isOpen: boolean;
   productToEdit?: any;
+  empresaId?: string;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -14,6 +15,7 @@ interface Props {
 export default function NuevoProductoModal({
   isOpen,
   productToEdit,
+  empresaId,
   onClose,
   onSuccess,
 }: Props) {
@@ -118,6 +120,7 @@ export default function NuevoProductoModal({
             purchase_price: purchaseNum,
             sale_price: saleNum,
             image_url: imageUrl,
+            ...(empresaId ? { empresa_id: empresaId } : {}),
           },
         ]);
 

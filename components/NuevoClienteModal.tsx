@@ -6,12 +6,14 @@ import { UserPlus, X, CheckCircle2, MapPin } from 'lucide-react';
 
 interface NuevoClienteModalProps {
   isOpen: boolean;
+  empresaId?: string;
   onClose: () => void;
   onSuccess: () => void;
 }
 
 export default function NuevoClienteModal({
   isOpen,
+  empresaId,
   onClose,
   onSuccess,
 }: NuevoClienteModalProps) {
@@ -40,6 +42,7 @@ export default function NuevoClienteModal({
         full_name: fullName.trim(),
         phone: phone.trim() || null,
         address: address.trim() || null,
+        ...(empresaId ? { empresa_id: empresaId } : {}),
       },
     ]);
 

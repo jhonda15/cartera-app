@@ -9,6 +9,7 @@ interface AbonoModalProps {
   clientName: string;
   currentBalance: number;
   isOpen: boolean;
+  empresaId?: string;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -18,6 +19,7 @@ export default function AbonoModal({
   clientName,
   currentBalance,
   isOpen,
+  empresaId,
   onClose,
   onSuccess,
 }: AbonoModalProps) {
@@ -60,6 +62,7 @@ export default function AbonoModal({
           payment_method: method,
           payment_date: paymentDate,
           notes: notes.trim() || null,
+          ...(empresaId ? { empresa_id: empresaId } : {}),
         },
       ]);
 
