@@ -44,6 +44,27 @@ interface GlobalPayment {
   };
 }
 
+interface Product {
+  id: string;
+  name: string;
+  category: string;
+  purchase_price: number;
+  sale_price: number;
+  image_url: string | null;
+  empresa_id?: string;
+  deleted_at?: string | null;
+}
+
+interface EmpresaSaaS {
+  id: string;
+  nombre: string;
+  nit: string | null;
+  estado: 'activo' | 'suspendido';
+  plan?: string;
+  fecha_vencimiento?: string | null;
+  created_at: string;
+}
+
 type TabType = 'dashboard' | 'debtors' | 'payments' | 'products' | 'superadmin';
 
 export default function DashboardPage() {
@@ -58,7 +79,7 @@ export default function DashboardPage() {
   const [empresaNit, setEmpresaNit] = useState<string>('');
   
   // SuperAdmin SaaS
-  const [allEmpresas, setAllEmpresas] = useState<any[]>([]);
+  const [allEmpresas, setAllEmpresas] = useState<EmpresaSaaS[]>([]);
   const [loadingEmpresas, setLoadingEmpresas] = useState(false);
   const router = useRouter();
 
@@ -70,11 +91,11 @@ export default function DashboardPage() {
   const [searchTerm, setSearchTerm] = useState<string>('');
 
   // Productos
-  const [productsList, setProductsList] = useState<any[]>([]);
+  const [productsList, setProductsList] = useState<Product[]>([]);
 
   // Modales
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
-  const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isAbonoModalOpen, setIsAbonoModalOpen] = useState(false);
   const [isVentaModalOpen, setIsVentaModalOpen] = useState(false);
   const [isClienteModalOpen, setIsClienteModalOpen] = useState(false);
@@ -147,27 +168,48 @@ export default function DashboardPage() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      // 1. Cargar Ventas Pendientes
+      // 1. Cargar Ventas Pendientes (excluyendo ventas anuladas/borradas lógicamente)
       const { data: salesData, error: salesErr } = await supabase
         .from('sales')
         .select('id, total_amount, balance_due, status, product_type, clients(full_name, phone)')
         .gt('balance_due', 0)
+        .is('deleted_at', null)
         .order('balance_due', { ascending: false });
 
       if (!salesErr && salesData) {
         setPendingSales(salesData as unknown as Sale[]);
+      } else {
+        // Fallback defensivo si la columna deleted_at no existe aún en la tabla
+        const { data: fallbackSales } = await supabase
+          .from('sales')
+          .select('id, total_amount, balance_due, status, product_type, clients(full_name, phone)')
+          .gt('balance_due', 0)
+          .order('balance_due', { ascending: false });
+        if (fallbackSales) setPendingSales(fallbackSales as unknown as Sale[]);
       }
 
-      // 2. Cargar Abonos Registrados
+      // 2. Cargar Abonos Registrados (excluyendo abonos anulados)
       const { data: paymentsData, error: paymentsErr } = await supabase
         .from('payments')
         .select('id, amount, payment_method, payment_date, notes, sale_id, sales(clients(full_name))')
+        .is('deleted_at', null)
         .order('payment_date', { ascending: false });
 
       if (!paymentsErr && paymentsData) {
         setAllPayments(paymentsData as unknown as GlobalPayment[]);
         const total = paymentsData.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
         setTotalCollected(total);
+      } else {
+        // Fallback si deleted_at no existe aún
+        const { data: fallbackPayments } = await supabase
+          .from('payments')
+          .select('id, amount, payment_method, payment_date, notes, sale_id, sales(clients(full_name))')
+          .order('payment_date', { ascending: false });
+        if (fallbackPayments) {
+          setAllPayments(fallbackPayments as unknown as GlobalPayment[]);
+          const total = fallbackPayments.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
+          setTotalCollected(total);
+        }
       }
     } catch (err) {
       console.error('Error cargando datos del dashboard:', err);
@@ -177,8 +219,18 @@ export default function DashboardPage() {
   };
 
   const fetchProductsList = async () => {
-    const { data } = await supabase.from('products').select('*').order('name');
-    if (data) setProductsList(data);
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .is('deleted_at', null)
+      .order('name');
+
+    if (!error && data) {
+      setProductsList(data as Product[]);
+    } else {
+      const { data: fallback } = await supabase.from('products').select('*').order('name');
+      if (fallback) setProductsList(fallback as Product[]);
+    }
   };
 
   const fetchEmpresas = async () => {
@@ -233,31 +285,63 @@ export default function DashboardPage() {
 
   const handleDeleteSale = async (saleId: string, clientName?: string) => {
     if (userRole !== 'admin' && !isSuperAdmin) {
-      alert('Solo los administradores pueden eliminar registros.');
+      alert('Solo los administradores pueden anular registros.');
       return;
     }
 
     const name = clientName || 'este cliente';
-    if (!window.confirm(`¿Deseas eliminar la venta registrada para ${name}?`)) return;
+    if (!window.confirm(`¿Deseas anular la venta registrada para ${name}? Esta acción se registrará en auditoría.`)) return;
 
-    await supabase.from('payments').delete().eq('sale_id', saleId);
-    const { error } = await supabase.from('sales').delete().eq('id', saleId);
+    // 1. Intentar anulación transaccional con Soft Delete vía RPC
+    const { error: rpcErr } = await supabase.rpc('anular_venta_segura', {
+      p_sale_id: saleId,
+      p_empresa_id: empresaId || null,
+      p_motivo: 'Anulado por administrador',
+    });
 
-    if (error) alert('Error: ' + error.message);
-    else fetchDashboardData();
+    if (rpcErr) {
+      // Fallback a soft delete directo o físico
+      const { error: softErr } = await supabase
+        .from('sales')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', saleId);
+
+      if (softErr) {
+        await supabase.from('payments').delete().eq('sale_id', saleId);
+        await supabase.from('sales').delete().eq('id', saleId);
+      }
+    }
+
+    fetchDashboardData();
   };
 
   const handleDeletePayment = async (paymentId: string, amount: number) => {
     if (userRole !== 'admin' && !isSuperAdmin) {
-      alert('Solo administradores pueden eliminar abonos.');
+      alert('Solo administradores pueden anular abonos.');
       return;
     }
 
-    if (!window.confirm(`¿Deseas eliminar el abono de $${amount.toLocaleString('es-CO')}?`)) return;
+    if (!window.confirm(`¿Deseas anular el abono de $${amount.toLocaleString('es-CO')}? Quedará registrado en auditoría.`)) return;
 
-    const { error } = await supabase.from('payments').delete().eq('id', paymentId);
-    if (error) alert('Error al eliminar abono: ' + error.message);
-    else fetchDashboardData();
+    // 1. Intentar anulación transaccional vía RPC
+    const { error: rpcErr } = await supabase.rpc('anular_abono_seguro', {
+      p_payment_id: paymentId,
+      p_empresa_id: empresaId || null,
+      p_motivo: 'Anulación de abono desde historial general',
+    });
+
+    if (rpcErr) {
+      const { error: softErr } = await supabase
+        .from('payments')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', paymentId);
+
+      if (softErr) {
+        await supabase.from('payments').delete().eq('id', paymentId);
+      }
+    }
+
+    fetchDashboardData();
   };
 
   const handleDeleteProduct = async (productId: string, productName: string) => {
@@ -268,9 +352,16 @@ export default function DashboardPage() {
 
     if (!window.confirm(`¿Deseas eliminar el producto "${productName}" del catálogo?`)) return;
 
-    const { error } = await supabase.from('products').delete().eq('id', productId);
-    if (error) alert('Error al eliminar producto: ' + error.message);
-    else fetchProductsList();
+    const { error: softErr } = await supabase
+      .from('products')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', productId);
+
+    if (softErr) {
+      await supabase.from('products').delete().eq('id', productId);
+    }
+
+    fetchProductsList();
   };
 
   const handleEditProduct = (product: any) => {

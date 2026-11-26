@@ -54,34 +54,44 @@ export default function AbonoModal({
     }
 
     try {
-      // 1. Insertar el abono con la fecha seleccionada
-      const { error: paymentError } = await supabase.from('payments').insert([
-        {
-          sale_id: saleId,
-          amount: numAmount,
-          payment_method: method,
-          payment_date: paymentDate,
-          notes: notes.trim() || null,
-          ...(empresaId ? { empresa_id: empresaId } : {}),
-        },
-      ]);
+      // 1. Intentar registrar vía RPC Transaccional Atómica en PostgreSQL
+      const { data: rpcRes, error: rpcError } = await supabase.rpc('registrar_abono_seguro', {
+        p_sale_id: saleId,
+        p_amount: numAmount,
+        p_payment_method: method,
+        p_payment_date: paymentDate,
+        p_notes: notes.trim() || null,
+        p_empresa_id: empresaId || null,
+      });
 
-      if (paymentError) throw paymentError;
+      if (rpcError) {
+        // Fallback defensivo si la función RPC aún no está creada en Supabase
+        const { error: paymentError } = await supabase.from('payments').insert([
+          {
+            sale_id: saleId,
+            amount: numAmount,
+            payment_method: method,
+            payment_date: paymentDate,
+            notes: notes.trim() || null,
+            ...(empresaId ? { empresa_id: empresaId } : {}),
+          },
+        ]);
 
-      // 2. Calcular nuevo saldo y estado
-      const newBalance = currentBalance - numAmount;
-      const newStatus = newBalance <= 0 ? 'paid' : 'pending';
+        if (paymentError) throw paymentError;
 
-      // 3. Actualizar la venta
-      const { error: updateError } = await supabase
-        .from('sales')
-        .update({
-          balance_due: newBalance <= 0 ? 0 : newBalance,
-          status: newStatus,
-        })
-        .eq('id', saleId);
+        const newBalance = currentBalance - numAmount;
+        const newStatus = newBalance <= 0 ? 'paid' : 'pending';
 
-      if (updateError) throw updateError;
+        const { error: updateError } = await supabase
+          .from('sales')
+          .update({
+            balance_due: newBalance <= 0 ? 0 : newBalance,
+            status: newStatus,
+          })
+          .eq('id', saleId);
+
+        if (updateError) throw updateError;
+      }
 
       setLoading(false);
       setAmount('');
@@ -89,7 +99,7 @@ export default function AbonoModal({
       onSuccess();
       onClose();
     } catch (err: any) {
-      setErrorMsg('Error al registrar el abono: ' + err.message);
+      setErrorMsg('Error al registrar el abono: ' + (err.message || 'Error desconocido'));
       setLoading(false);
     }
   };

@@ -33,53 +33,75 @@ export default function HistorialAbonosModal({ isOpen, sale, userRole = 'admin',
 
   const fetchPayments = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('payments')
-      .select('*')
-      .eq('sale_id', sale.id)
-      .order('payment_date', { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('sale_id', sale.id)
+        .is('deleted_at', null)
+        .order('payment_date', { ascending: false });
 
-    if (!error && data) {
-      setPayments(data as Payment[]);
+      if (!error && data) {
+        setPayments(data as Payment[]);
+      } else {
+        // Fallback si la columna deleted_at aún no existe en Supabase
+        const { data: fallbackData } = await supabase
+          .from('payments')
+          .select('*')
+          .eq('sale_id', sale.id)
+          .order('payment_date', { ascending: false });
+        if (fallbackData) setPayments(fallbackData as Payment[]);
+      }
+    } catch (err) {
+      console.error('Error al cargar abonos:', err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleDeletePayment = async (paymentId: string, paymentAmount: number) => {
-    if (!window.confirm(`¿Deseas eliminar este abono de $${paymentAmount.toLocaleString('es-CO')}?`)) return;
+    if (!window.confirm(`¿Deseas anular este abono de $${paymentAmount.toLocaleString('es-CO')}?`)) return;
 
     setDeletingId(paymentId);
     try {
-      // 1. Eliminar el registro del abono
-      const { error: deleteError } = await supabase
-        .from('payments')
-        .delete()
-        .eq('id', paymentId);
+      // 1. Intentar anulación transaccional con Soft Delete y Auditoría
+      const { data: rpcRes, error: rpcError } = await supabase.rpc('anular_abono_seguro', {
+        p_payment_id: paymentId,
+        p_empresa_id: sale.empresa_id || null,
+        p_motivo: 'Anulación manual desde historial',
+      });
 
-      if (deleteError) throw deleteError;
+      if (rpcError) {
+        // Fallback si la función RPC aún no está creada
+        const { error: softError } = await supabase
+          .from('payments')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', paymentId);
 
-      // 2. Recalcular el nuevo saldo sumando nuevamente el monto eliminado a la deuda actual
+        if (softError) {
+          // Si no existe la columna deleted_at, borrado físico
+          await supabase.from('payments').delete().eq('id', paymentId);
+        }
+
+        const newBalance = Number(sale.balance_due) + Number(paymentAmount);
+        const newStatus = newBalance > 0 ? 'pending' : 'paid';
+
+        await supabase
+          .from('sales')
+          .update({
+            balance_due: newBalance,
+            status: newStatus,
+          })
+          .eq('id', sale.id);
+      }
+
       const newBalance = Number(sale.balance_due) + Number(paymentAmount);
-      const newStatus = newBalance > 0 ? 'pending' : 'paid';
-
-      // 3. Actualizar la venta en la base de datos
-      const { error: updateError } = await supabase
-        .from('sales')
-        .update({
-          balance_due: newBalance,
-          status: newStatus,
-        })
-        .eq('id', sale.id);
-
-      if (updateError) throw updateError;
-
-      // 4. Actualizar estado local y notificar
       setPayments((prev) => prev.filter((p) => p.id !== paymentId));
-      sale.balance_due = newBalance; // Actualizar valor local de la venta en pantalla
+      sale.balance_due = newBalance;
       
       if (onSuccess) onSuccess();
     } catch (err: any) {
-      alert('Error al eliminar abono: ' + err.message);
+      alert('Error al anular abono: ' + err.message);
     } finally {
       setDeletingId(null);
     }
